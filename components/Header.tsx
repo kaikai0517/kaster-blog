@@ -23,7 +23,7 @@ function Header() {
             />
           </Link>
         </div>
-        <div className="hidden md:inline-flex items-center space-x-5">
+        {/* <div className="hidden md:inline-flex items-center space-x-5">
           <Link href="/skilltree">
             <h3>skilltree</h3>
           </Link>
@@ -32,7 +32,7 @@ function Header() {
           <h3 className="text-white bg-green-600 px-4 py-1 rounded-full">
             Follow
           </h3>
-        </div>
+        </div> */}
       </div>
       <div className="flex items-center space-x-5 text-green-600">
         <Image
