@@ -1,36 +1,55 @@
-export interface Post {
-  _id: string;
-  _createdAt: string;
-  title: string;
-  author: {
-    name: string;
-    image: string;
-  };
-  description: string;
-  comments: [Comment];
-  mainImage: {
-    asset: {
-      url: string;
+export interface NotionPost {
+  object: string;
+  id: string;
+  created_time: string;
+  created_by: object;
+  last_edited_time: string;
+  last_edited_by: string;
+  title: array;
+  description: array;
+  icon: object;
+  cover: object;
+  properties: {
+    "Files & media": {
+      files: array;
+    };
+    "youtube 網址": {
+      rich_text: array;
+    };
+    熟練度: {
+      select: {
+        name: string;
+      };
+    };
+    網址: {
+      rich_text: array;
+    };
+
+    Name: {
+      title: array;
+    };
+    Tags: {
+      multi_select: [
+        {
+          name: string;
+          color: string;
+          id: string;
+        }
+      ];
     };
   };
-  slug: {
-    current: string;
-  };
-  body: [object];
+  parent: object;
+  url: string;
+  archived: boolean;
+  is_inline: boolean;
 }
 
-export interface Comment {
-  approved: boolean;
-  comment: string;
-  email: string;
-  name: string;
-  post: {
-    _ref: string;
-    _type: string;
-  };
-  _createdAt: string;
-  _id: string;
-  _rev: string;
-  _type: string;
-  _updateAt: string;
+export interface Block {
+  object: string;
+  results: array;
+}
+
+export interface Comments {
+  object: string;
+  results: Array;
 }

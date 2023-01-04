@@ -1,26 +1,198 @@
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
-import { sanityClient, urlFor } from "../../sanity";
 import { GetStaticPaths, GetStaticProps } from "next";
-import { Post } from "../../typings";
+import { NotionPost, Block, Comments } from "../../typings";
 import PortableText from "react-portable-text";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { useState } from "react";
 import Image from "next/image";
 import { useThemeContext } from "../../context/theme";
+import { notion, databaseId } from "../../notion";
+import YouTubeIcon from "@mui/icons-material/YouTube";
+import Chip from "@mui/material/Chip";
+import LanguageIcon from "@mui/icons-material/Language";
+import { Fragment } from "react";
+import styles from "./post.module.css";
+import Link from "next/link";
 
 interface IFormInput {
-  _id: string;
   name: string;
-  email: string;
   comment: string;
 }
-
 interface Props {
-  post: Post;
+  post: NotionPost;
+  comments: Comments;
+  block: Block;
+  hasMapComments: Array<Comment>;
 }
 
-function Post({ post }: Props) {
+interface Comment {
+  id: string;
+  name: string;
+  text: string;
+  rich_text: [
+    {
+      plain_text: string;
+    }
+  ];
+  created_by: {
+    id: string;
+  };
+}
+
+export const Text = ({ text }) => {
+  if (!text) {
+    return null;
+  }
+  return text.map((value) => {
+    const {
+      annotations: { bold, code, color, italic, strikethrough, underline },
+      text,
+    } = value;
+    return (
+      <span
+        className={[
+          bold ? styles.bold : "",
+          code ? styles.code : "",
+          italic ? styles.italic : "",
+          strikethrough ? styles.strikethrough : "",
+          underline ? styles.underline : "",
+        ].join(" ")}
+        style={color !== "default" ? { color } : {}}
+      >
+        {text.link ? <a href={text.link.url}>{text.content}</a> : text.content}
+      </span>
+    );
+  });
+};
+
+const renderNestedList = (block) => {
+  const { type } = block;
+  const value = block[type];
+  if (!value) return null;
+
+  const isNumberedList = value.children[0].type === "numbered_list_item";
+
+  if (isNumberedList) {
+    return <ol>{value.children.map((block) => renderBlock(block))}</ol>;
+  }
+  return <ul>{value.children.map((block) => renderBlock(block))}</ul>;
+};
+
+const renderBlock = (block) => {
+  const { type, id } = block;
+  const value = block[type];
+
+  switch (type) {
+    case "paragraph":
+      return (
+        <p>
+          <Text text={value.rich_text} />
+        </p>
+      );
+    case "heading_1":
+      return (
+        <h1>
+          <Text text={value.rich_text} />
+        </h1>
+      );
+    case "heading_2":
+      return (
+        <h2>
+          <Text text={value.rich_text} />
+        </h2>
+      );
+    case "heading_3":
+      return (
+        <h3>
+          <Text text={value.rich_text} />
+        </h3>
+      );
+    case "bulleted_list_item":
+    case "numbered_list_item":
+      return (
+        <li>
+          <Text text={value.rich_text} />
+          {!!value.children && renderNestedList(block)}
+        </li>
+      );
+    case "to_do":
+      return (
+        <div>
+          <label htmlFor={id}>
+            <input type="checkbox" id={id} defaultChecked={value.checked} />{" "}
+            <Text text={value.rich_text} />
+          </label>
+        </div>
+      );
+    case "toggle":
+      return (
+        <details>
+          <summary>
+            <Text text={value.rich_text} />
+          </summary>
+          {value.children?.map((block) => (
+            <Fragment key={block.id}>{renderBlock(block)}</Fragment>
+          ))}
+        </details>
+      );
+    case "child_page":
+      return <p>{value.title}</p>;
+    case "image":
+      const src =
+        value.type === "external" ? value.external.url : value.file.url;
+      const caption = value.caption ? value.caption[0]?.plain_text : "";
+      return (
+        <figure>
+          <img src={src} alt={caption} />
+          {caption && <figcaption>{caption}</figcaption>}
+        </figure>
+      );
+    case "divider":
+      return <hr key={id} />;
+    case "quote":
+      return <blockquote key={id}>{value.rich_text[0].plain_text}</blockquote>;
+    case "code":
+      return (
+        <pre className={styles.pre}>
+          <code className={styles.code_block} key={id}>
+            {value.rich_text[0].plain_text}
+          </code>
+        </pre>
+      );
+    case "file":
+      const src_file =
+        value.type === "external" ? value.external.url : value.file.url;
+      const splitSourceArray = src_file.split("/");
+      const lastElementInArray = splitSourceArray[splitSourceArray.length - 1];
+      const caption_file = value.caption ? value.caption[0]?.plain_text : "";
+      return (
+        <figure>
+          <div className={styles.file}>
+            📎{" "}
+            <Link href={src_file} passHref>
+              {lastElementInArray.split("?")[0]}
+            </Link>
+          </div>
+          {caption_file && <figcaption>{caption_file}</figcaption>}
+        </figure>
+      );
+    case "bookmark":
+      const href = value.url;
+      return (
+        <a href={href} target="_brank" className={styles.bookmark}>
+          {href}
+        </a>
+      );
+    default:
+      return `❌ Unsupported block (${
+        type === "unsupported" ? "unsupported by Notion API" : type
+      })`;
+  }
+};
+
+function Post({ post, blocks, hasMapComments }: Props) {
+  console.log(blocks);
   const [submitted, setSubmitted] = useState(false);
   const [theme, setTheme] = useThemeContext();
   const {
@@ -32,9 +204,13 @@ function Post({ post }: Props) {
   const onSubmit: SubmitHandler<IFormInput> = async (data) => {
     try {
       await fetch("/api/createComment", {
-        method: "POST",
-        body: JSON.stringify(data),
+        method: "post",
+        body: JSON.stringify({
+          id: post.id,
+          comment: JSON.stringify(data),
+        }),
       });
+
       setSubmitted(true);
     } catch (error) {
       setSubmitted(false);
@@ -46,52 +222,61 @@ function Post({ post }: Props) {
         <Header />
         <Image
           className="w-full h-40 object-cover"
-          src={urlFor(post.mainImage).url()}
+          src={post.properties["Files & media"].files[0].file.url}
           alt=""
           width={500}
           height={500}
         />
-        <article className="max-w-3xl mx-auto p-5">
+        <article className="max-w-3xl mx-auto p-5 space-y-5">
           <h1 className="text-3xl mt-10 mb-3">{post.title}</h1>
           <h2 className="text-xl font-light text-gray-500 mb-2">
             {post.description}
           </h2>
           <div className="flex items-center space-x-2">
-            <Image
-              className="w-10 h-10 rounded-full"
-              src={urlFor(post.author.image).url()}
-              alt=""
-              width={500}
-              height={500}
-            />
             <p className="font-extraLight text-sm">
-              Blog post by{" "}
-              <span className="text-green-600">{post.author.name} </span> -
-              Published at {new Date(post._createdAt).toLocaleString()}{" "}
+              Leetcode{" "}
+              <span className="text-green-600">
+                {post.properties.Name.title[0].plain_text}{" "}
+              </span>{" "}
+              - Published at {new Date(post.created_time).toLocaleString()}{" "}
             </p>
           </div>
-          <div className="mt-10">
-            <PortableText
-              dataset={process.env.NEXT_PUBLIC_SANITY_DATASET}
-              projectId={process.env.NEXT_PUBLIC_SANITY_PROJECT_ID}
-              content={post.body}
-              serializers={{
-                h1: (props: any) => (
-                  <h1 className="text-2xl font-bold my-5" {...props} />
-                ),
-                h2: (props: any) => (
-                  <h2 className="text-xl font-bold my-5" {...props} />
-                ),
-                li: ({ children }: any) => (
-                  <li className="ml-4 list-disc">{children}</li>
-                ),
-                link: ({ href, children }: any) => (
-                  <a href={href} className="text-blue-500 hover:underline">
-                    {children}
-                  </a>
-                ),
-              }}
-            />
+          <div className="flex items-center space-x-2">
+            <div className="flex gap-2 justify-end">
+              {post.properties.Tags.multi_select.map((tag) => (
+                <Chip key={tag.id} label={tag.name}></Chip>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <p className="font-extraLight text-sm">熟練度 </p>
+            <div className="text-red-600">
+              {post.properties["熟練度"].select.name}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <p className="font-extraLight text-sm">Youtube by Neetcode </p>
+            <a
+              className="text-red-600"
+              href={post.properties["youtube 網址"].rich_text[0].href}
+            >
+              <YouTubeIcon></YouTubeIcon>
+            </a>
+          </div>
+          <div className="flex items-center space-x-2">
+            <p className="font-extraLight text-sm">Leetcode Website </p>
+            <a
+              className="text-blue-600"
+              href={post.properties["網址"].rich_text[0].href}
+            >
+              <LanguageIcon></LanguageIcon>
+            </a>
+          </div>
+
+          <div className="mt-10 space-y-5">
+            {blocks.results.map((block) => (
+              <Fragment key={block.id}>{renderBlock(block)}</Fragment>
+            ))}
           </div>
         </article>
         <hr className="max-w-lg my-5 mx-auto border border-yellow-500" />
@@ -110,14 +295,6 @@ function Post({ post }: Props) {
             <h3 className="text-sm text-yellow-500">Enjoyed this article?</h3>
             <h3 className="text-3xl font-bold">Leave a comment below!</h3>
             <hr className="py-3 mt-2" />
-
-            <input
-              {...register("_id")}
-              type="hidden"
-              name="_id"
-              value={post._id}
-            />
-
             <label className="block mb-5">
               <span className="text-gray-700 dark:text-white">Name</span>
               <input
@@ -127,15 +304,7 @@ function Post({ post }: Props) {
                 type="text"
               />
             </label>
-            <label className="block mb-5">
-              <span className="text-gray-700 dark:text-white">Email</span>
-              <input
-                {...register("email", { required: true })}
-                className="shadow border rounded py-2 px-3 form-input mt-1 block w-full ring-yellow-500 outline-none focus:ring"
-                placeholder="John Appleseed"
-                type="text"
-              />
-            </label>
+
             <label className="block mb-5">
               <span className="text-gray-700 dark:text-white">Comment</span>
               <textarea
@@ -157,11 +326,6 @@ function Post({ post }: Props) {
                   -The Comment Field is required
                 </span>
               )}
-              {errors.email && (
-                <span className="text-red-500">
-                  -The Email Field is required
-                </span>
-              )}
             </div>
 
             <input
@@ -173,11 +337,11 @@ function Post({ post }: Props) {
         <div className="flex flex-col p-10 my-10 max-w-2xl mx-auto shadow-yellow-500 shadow space-y-2">
           <h3 className="text-4xl">Comments</h3>
           <hr className="pb-2" />
-          {post.comments.map((comment) => (
-            <div key={comment._id}>
+          {hasMapComments.map((comment) => (
+            <div key={comment.id}>
               <p>
                 <span className="text-yellow-500">{comment.name}:</span>{" "}
-                {comment.comment}
+                {comment.text}
               </p>
             </div>
           ))}
@@ -191,30 +355,13 @@ function Post({ post }: Props) {
 export default Post;
 
 export const getStaticPaths: GetStaticPaths = async () => {
-  const query = `*[_type == "post"]{
-        _id,
-        _createdAt,
-        title,
-        author-> {
-            name,
-            image
-        },
-        'comments': *[
-          _type == "comment" &&
-          post._ref == ^._id &&
-          approved == true
-        ],
-        description,
-        mainImage,
-        slug,
-        body
-        }`;
+  const { results } = await notion.databases.query({
+    database_id: databaseId,
+  });
 
-  const posts = await sanityClient.fetch(query);
-
-  const paths = posts.map((post: Post) => ({
+  const paths = results.map((result) => ({
     params: {
-      slug: post.slug.current,
+      slug: result.id,
     },
   }));
 
@@ -225,28 +372,32 @@ export const getStaticPaths: GetStaticPaths = async () => {
 };
 
 export const getStaticProps: GetStaticProps = async ({ params }) => {
-  const query = `*[_type == "post" && slug.current == $slug][0]{
-        _id,
-        _createdAt,
-        title,
-        author-> {
-            name,
-            image
-        },
-        'comments': *[
-            _type == 'comment' &&
-            post._ref == ^._id &&
-            approved == true
-        ],
-        description,
-        mainImage,
-        slug,
-        body
-        }`;
-
-  const post = await sanityClient.fetch(query, {
-    slug: params?.slug,
+  const comments = await notion.comments.list({
+    block_id: params?.slug as string,
   });
+
+  const blocks = await notion.blocks.children.list({
+    block_id: params?.slug as string,
+  });
+
+  const post = await notion.pages.retrieve({
+    page_id: params?.slug as string,
+  });
+
+  const mapUserInfo = (comments: Comments) => {
+    const map = comments.results.map((comment: Comment) => {
+      const data = JSON.parse(comment.rich_text[0].plain_text);
+      return {
+        ...comment,
+        name: data.name,
+        text: data.comment,
+      };
+    });
+
+    return map;
+  };
+
+  const hasMapComments = mapUserInfo(comments);
 
   if (!post) {
     return {
@@ -257,6 +408,9 @@ export const getStaticProps: GetStaticProps = async ({ params }) => {
   return {
     props: {
       post,
+      comments,
+      blocks,
+      hasMapComments,
     },
   };
 };

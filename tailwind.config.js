@@ -7,7 +7,13 @@ module.exports = {
   ],
   darkMode: "class",
   theme: {
-    extend: {},
+    extend: {
+      colors:{
+        purple: '#EAE9E7',
+        brown: "#EEE0DA",
+
+      }
+    },
   },
   plugins: [],
 }
